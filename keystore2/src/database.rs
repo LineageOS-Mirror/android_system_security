@@ -53,7 +53,9 @@ use crate::impl_metadata; // This is in database/utils.rs
 use crate::key_parameter::{KeyParameter, KeyParameterValue, Tag};
 use crate::ks_err;
 use crate::permission::KeyPermSet;
-use crate::utils::{get_current_time_in_milliseconds, watchdog as wd, Challenge, AID_USER_OFFSET};
+use crate::utils::{
+    get_current_time_in_milliseconds, watchdog as wd, Challenge, SecureUserId, AID_USER_OFFSET,
+};
 use crate::{
     error::{Error as KsError, ErrorCode, ResponseCode},
     super_key::SuperKeyType,
@@ -868,9 +870,13 @@ impl AuthTokenEntry {
     }
 
     /// Checks if this auth token satisfies the given authentication information.
-    pub fn satisfies(&self, user_secure_ids: &[i64], auth_type: HardwareAuthenticatorType) -> bool {
-        user_secure_ids.iter().any(|&sid| {
-            (sid == self.auth_token.userId || sid == self.auth_token.authenticatorId)
+    pub fn satisfies(
+        &self,
+        user_sids: &[SecureUserId],
+        auth_type: HardwareAuthenticatorType,
+    ) -> bool {
+        user_sids.iter().any(|&sid| {
+            (sid.0 == self.auth_token.userId || sid.0 == self.auth_token.authenticatorId)
                 && ((auth_type.0 & self.auth_token.authenticatorType.0) != 0)
         })
     }
@@ -3010,7 +3016,7 @@ impl KeystoreDB {
     pub fn get_app_uids_affected_by_sid(
         &mut self,
         user_id: i32,
-        secure_user_id: i64,
+        sid: SecureUserId,
     ) -> Result<Vec<i64>> {
         let _wp = wd::watch("KeystoreDB::get_app_uids_affected_by_sid");
 
@@ -3056,7 +3062,7 @@ impl KeystoreDB {
                     let is_key_bound_to_sid = params.iter().any(|kp| {
                         matches!(
                             kp.key_parameter_value(),
-                            KeyParameterValue::UserSecureID(sid) if *sid == secure_user_id
+                            KeyParameterValue::UserSecureID(s) if *s == sid.0
                         )
                     });
                     Ok(is_key_bound_to_sid).no_gc()
