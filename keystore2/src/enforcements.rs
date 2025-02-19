@@ -18,8 +18,9 @@ use crate::ks_err;
 use crate::error::{map_binder_status, Error, ErrorCode};
 use crate::globals::{get_timestamp_service, ASYNC_TASK, DB, ENFORCEMENTS};
 use crate::key_parameter::{KeyParameter, KeyParameterValue};
-use crate::{authorization::Error as AuthzError, super_key::SuperEncryptionType};
 use crate::{
+    authorization::Error as AuthzError, super_key::{SuperEncryptionType},
+    boot_level_keys::BootLevel,
     database::{AuthTokenEntry, BootTime},
     globals::SUPER_KEY,
 };
@@ -454,7 +455,7 @@ impl Enforcements {
         let mut unlocked_device_required = false;
         let mut key_usage_limited: Option<i64> = None;
         let mut confirmation_token_receiver: Option<Arc<Mutex<Option<Receiver<Vec<u8>>>>>> = None;
-        let mut max_boot_level: Option<i32> = None;
+        let mut max_boot_level: Option<BootLevel> = None;
 
         // iterate through key parameters, recording information we need for authorization
         // enforcements later, or enforcing authorizations in place, where applicable
@@ -517,7 +518,7 @@ impl Enforcements {
                     confirmation_token_receiver = Some(self.confirmation_token_receiver.clone());
                 }
                 KeyParameterValue::MaxBootLevel(level) => {
-                    max_boot_level = Some(*level);
+                    max_boot_level = Some(BootLevel(*level as usize));
                 }
                 // NOTE: as per offline discussion, sanitizing key parameters and rejecting
                 // create operation if any non-allowed tags are present, is not done in
@@ -702,9 +703,10 @@ impl Enforcements {
         let mut result = Candidate { priority: 0, enc_type: SuperEncryptionType::None };
         for kp in key_parameters {
             let t = match kp.key_parameter_value() {
-                KeyParameterValue::MaxBootLevel(level) => {
-                    Candidate { priority: 3, enc_type: SuperEncryptionType::BootLevel(*level) }
-                }
+                KeyParameterValue::MaxBootLevel(level) => Candidate {
+                    priority: 3,
+                    enc_type: SuperEncryptionType::BootLevel(BootLevel(*level as usize)),
+                },
                 KeyParameterValue::UnlockedDeviceRequired if *domain == Domain::APP => {
                     Candidate { priority: 2, enc_type: SuperEncryptionType::UnlockedDeviceRequired }
                 }
