@@ -251,7 +251,7 @@ impl Maintenance {
         if keystore2_flags::attest_modules() {
             std::thread::spawn(move || {
                 Self::watch_apex_info()
-                    .unwrap_or_else(|e| log::error!("watch_apex_info failed: {e:?}"));
+                    .unwrap_or_else(|e| log::error!("watch_apex_info failed, preventing keystore.module_hash.sent from being set to true; this may therefore block boot: {e:?}"));
             });
         } else {
             rustutils::system_properties::write("keystore.module_hash.sent", "true")
@@ -510,10 +510,6 @@ impl Interface for Maintenance {
         f: &mut dyn std::io::Write,
         _args: &[&std::ffi::CStr],
     ) -> Result<(), binder::StatusCode> {
-        if !keystore2_flags::enable_dump() {
-            log::info!("skipping dump() as flag not enabled");
-            return Ok(());
-        }
         log::info!("dump()");
         let _wp = wd::watch("IKeystoreMaintenance::dump");
         check_dump_permission().map_err(|_e| {
