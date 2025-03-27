@@ -1288,6 +1288,40 @@ impl KeystoreDB {
         }
     }
 
+    /// Return the top `max_usize` uids by numbers of keys owned, together with their key
+    /// count. Only return uids that own more than `min_key_count` keys.
+    pub fn per_uid_counts(
+        &mut self,
+        max_uids: usize,
+        min_key_count: usize,
+    ) -> Result<Vec<(i32, usize)>> {
+        self.with_transaction(Immediate("TX_per_uid_counts"), |tx| {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT namespace, COUNT(*) FROM persistent.keyentry
+                         WHERE domain = ?
+                         GROUP BY namespace
+                         ORDER BY COUNT(*) DESC
+                         LIMIT ?;",
+                )
+                .context(ks_err!("KeystoreDB::per_uid_counts: failed to prepare statement"))?;
+            let mut rows = stmt
+                .query(params![Domain::APP.0, max_uids])
+                .context(ks_err!("KeystoreDB::per_uid_counts: query failed"))?;
+            let mut results = Vec::new();
+            db_utils::with_rows_extract_all(&mut rows, |row| {
+                let uid: i32 = row.get(0).context("Failed to read namespace column")?;
+                let count: usize = row.get(1).context("Failed to read count")?;
+                if count > min_key_count {
+                    results.push((uid, count));
+                }
+                Ok(())
+            })?;
+            Ok(results).no_gc()
+        })
+        .context("KeystoreDB::per_uid_counts")
+    }
+
     /// This function is intended to be used by the garbage collector.
     /// It deletes the blobs given by `blob_ids_to_delete`. It then tries to find up to `max_blobs`
     /// superseded key blobs that might need special handling by the garbage collector.
