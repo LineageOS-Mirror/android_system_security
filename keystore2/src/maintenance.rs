@@ -440,6 +440,26 @@ impl Maintenance {
             }
         }
 
+        if keystore2_flags::count_keys_per_uid() {
+            // Display database top key counts per uid.
+            let max_uids = 10;
+            let min_count = 5;
+            writeln!(f, "Top-{max_uids} per-uid key counts (where > {min_count} keys):")?;
+            DB.with(|db| -> std::io::Result<()> {
+                let mut db = db.borrow_mut();
+                let counts = db.per_uid_counts(max_uids, min_count).unwrap_or_else(|e| {
+                    log::error!("failed to retrieve top {max_uids} per-uid counts: {e:?}");
+                    let _ = writeln!(f, "  DB retrieval failed: {e:?}");
+                    Vec::new()
+                });
+                for (uid, count) in counts {
+                    writeln!(f, "  uid={uid:<8}: key_count: {count}")?;
+                }
+                Ok(())
+            })?;
+            writeln!(f)?;
+        }
+
         // Display database size information.
         match crate::metrics_store::pull_storage_stats() {
             Ok(atoms) => {

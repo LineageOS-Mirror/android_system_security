@@ -2840,7 +2840,7 @@ fn db_populate_keys(db: &mut KeystoreDB, next_keyid: usize, key_count: usize) {
 /// database population.
 fn run_with_many_keys<F, T>(max_count: usize, test_fn: F) -> Result<()>
 where
-    F: Fn(&mut KeystoreDB) -> T,
+    F: Fn(&mut KeystoreDB, usize) -> T,
 {
     prep_and_run_with_many_keys(max_count, |_db| (), test_fn)
 }
@@ -2849,7 +2849,7 @@ where
 /// database population.
 fn prep_and_run_with_many_keys<F, T, P>(max_count: usize, prep_fn: P, test_fn: F) -> Result<()>
 where
-    F: Fn(&mut KeystoreDB) -> T,
+    F: Fn(&mut KeystoreDB, usize) -> T,
     P: Fn(&mut KeystoreDB),
 {
     android_logger::init_once(
@@ -2875,7 +2875,7 @@ where
 
         // Time execution of the test function.
         let start = std::time::Instant::now();
-        let _result = test_fn(&mut db);
+        let _result = test_fn(&mut db, key_count);
         println!("{key_count}, {}", start.elapsed().as_secs_f64());
 
         next_keyid = key_count;
@@ -2900,14 +2900,32 @@ fn db_key_count(db: &mut KeystoreDB) -> usize {
 }
 
 #[test]
+fn test_per_uid_counts() -> Result<()> {
+    run_with_many_keys(1_000_000, |db, key_count| {
+        // There is one uid with more than zero keys.
+        assert_eq!(db.per_uid_counts(0, 0).unwrap(), vec![]);
+        assert_eq!(db.per_uid_counts(1, 0).unwrap(), vec![(10001, key_count)]);
+        assert_eq!(db.per_uid_counts(10, 0).unwrap(), vec![(10001, key_count)]);
+
+        // There are no uids with > `key_count` keys.
+        assert_eq!(db.per_uid_counts(1, key_count).unwrap(), vec![]);
+        assert_eq!(db.per_uid_counts(10, key_count).unwrap(), vec![]);
+
+        // There is one uid with >= `key_count` keys.
+        assert_eq!(db.per_uid_counts(1, key_count - 1).unwrap(), vec![(10001, key_count)]);
+        assert_eq!(db.per_uid_counts(10, key_count - 1).unwrap(), vec![(10001, key_count)]);
+    })
+}
+
+#[test]
 fn test_handle_superseded_with_many_keys() -> Result<()> {
-    run_with_many_keys(1_000_000, |db| db.handle_next_superseded_blobs(&[], 20))
+    run_with_many_keys(1_000_000, |db, _| db.handle_next_superseded_blobs(&[], 20))
 }
 
 #[test]
 fn test_get_storage_stats_with_many_keys() -> Result<()> {
     use android_security_metrics::aidl::android::security::metrics::Storage::Storage as MetricsStorage;
-    run_with_many_keys(1_000_000, |db| {
+    run_with_many_keys(1_000_000, |db, _| {
         db.get_storage_stat(MetricsStorage::DATABASE).unwrap();
         db.get_storage_stat(MetricsStorage::KEY_ENTRY).unwrap();
         db.get_storage_stat(MetricsStorage::KEY_ENTRY_ID_INDEX).unwrap();
@@ -2927,7 +2945,7 @@ fn test_get_storage_stats_with_many_keys() -> Result<()> {
 
 #[test]
 fn test_list_keys_with_many_keys() -> Result<()> {
-    run_with_many_keys(1_000_000, |db: &mut KeystoreDB| -> Result<()> {
+    run_with_many_keys(1_000_000, |db: &mut KeystoreDB, _| -> Result<()> {
         // Behave equivalently to how clients list aliases.
         let domain = Domain::APP;
         let namespace = 10001;
@@ -2973,7 +2991,7 @@ fn test_upgrade_1_to_2_with_many_keys() -> Result<()> {
             })
             .unwrap();
         },
-        |db: &mut KeystoreDB| -> Result<()> {
+        |db: &mut KeystoreDB, _| -> Result<()> {
             // Run the upgrade process.
             db.with_transaction(Immediate("TX_upgrade_1_to_2"), |tx| {
                 KeystoreDB::from_1_to_2(tx).no_gc()
