@@ -2581,8 +2581,8 @@ fn test_blobentry_gc() -> Result<()> {
 
     // Delete keys 4 and 5.  The keyblobs aren't removed yet.
     db.with_transaction(Immediate("TX_delete_test_keys"), |tx| {
-        KeystoreDB::mark_unreferenced(tx, key_id4)?;
-        KeystoreDB::mark_unreferenced(tx, key_id5)?;
+        KeystoreDB::remove_key_rows(tx, key_id4)?;
+        KeystoreDB::remove_key_rows(tx, key_id5)?;
         Ok(()).no_gc()
     })
     .unwrap();
@@ -2646,8 +2646,8 @@ fn test_upgrade_1_to_2() -> Result<()> {
 
     // Delete keys 4 and 5.  The keyblobs aren't removed yet.
     db.with_transaction(Immediate("TX_delete_test_keys"), |tx| {
-        KeystoreDB::mark_unreferenced(tx, key_id4)?;
-        KeystoreDB::mark_unreferenced(tx, key_id5)?;
+        KeystoreDB::remove_key_rows(tx, key_id4)?;
+        KeystoreDB::remove_key_rows(tx, key_id5)?;
         Ok(()).no_gc()
     })
     .unwrap();
