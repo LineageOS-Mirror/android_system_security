@@ -22,7 +22,7 @@ use crate::key_parameter::{
 };
 use crate::key_perm_set;
 use crate::permission::{KeyPerm, KeyPermSet};
-use crate::super_key::{SuperKeyManager, USER_AFTER_FIRST_UNLOCK_SUPER_KEY, SuperEncryptionAlgorithm, SuperKeyType};
+use crate::super_key::{SuperKeyManager, CREDENTIAL_ENCRYPTED_SUPER_KEY, SuperEncryptionAlgorithm, SuperKeyType};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     HardwareAuthToken::HardwareAuthToken,
     HardwareAuthenticatorType::HardwareAuthenticatorType as kmhw_authenticator_type,
@@ -2221,7 +2221,7 @@ fn test_unbind_auth_bound_keys_for_user() -> Result<()> {
     let nspace: i64 = (user_id * AID_USER_OFFSET).into();
     let other_user_id = 2;
     let other_user_nspace: i64 = (other_user_id * AID_USER_OFFSET).into();
-    let super_key_type = &USER_AFTER_FIRST_UNLOCK_SUPER_KEY;
+    let super_key_type = &CREDENTIAL_ENCRYPTED_SUPER_KEY;
 
     // Create a superencryption key.
     let super_key = keystore2_crypto::generate_aes256_key()?;
@@ -2278,23 +2278,18 @@ fn test_store_super_key() -> Result<()> {
     let (encrypted_super_key, metadata) = SuperKeyManager::encrypt_with_password(&super_key, &pw)?;
     db.store_super_key(
         1,
-        &USER_AFTER_FIRST_UNLOCK_SUPER_KEY,
+        &CREDENTIAL_ENCRYPTED_SUPER_KEY,
         &encrypted_super_key,
         &metadata,
         &KeyMetaData::new(),
     )?;
 
     // Check if super key exists.
-    assert!(db.key_exists(
-        Domain::APP,
-        1,
-        USER_AFTER_FIRST_UNLOCK_SUPER_KEY.alias,
-        KeyType::Super
-    )?);
+    assert!(db.key_exists(Domain::APP, 1, CREDENTIAL_ENCRYPTED_SUPER_KEY.alias, KeyType::Super)?);
 
-    let (_, key_entry) = db.load_super_key(&USER_AFTER_FIRST_UNLOCK_SUPER_KEY, 1)?.unwrap();
+    let (_, key_entry) = db.load_super_key(&CREDENTIAL_ENCRYPTED_SUPER_KEY, 1)?.unwrap();
     let loaded_super_key = SuperKeyManager::extract_super_key_from_key_entry(
-        USER_AFTER_FIRST_UNLOCK_SUPER_KEY.algorithm,
+        CREDENTIAL_ENCRYPTED_SUPER_KEY.algorithm,
         key_entry,
         &pw,
         None,
