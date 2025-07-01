@@ -1169,15 +1169,16 @@ impl SuperKeyManager {
         user: AndroidUserId,
         password: &Password,
     ) -> Result<()> {
-        info!("unlock_user({user:?})");
         match self.get_user_state(db, legacy_importer, user)? {
             UserState::CeUnlocked(_) => {
+                info!("CredentialEncrypted super key for user {user:?} is already unlocked.");
                 self.unlock_unlocked_device_required_keys(db, user, password)
             }
             UserState::Uninitialized => {
                 Err(Error::sys()).context(ks_err!("Tried to unlock an uninitialized {user:?}!"))
             }
             UserState::CeLocked => {
+                info!("Unlocking CredentialEncrypted super key for user {user:?}.");
                 let alias = &CREDENTIAL_ENCRYPTED_SUPER_KEY;
                 let result = legacy_importer
                     .with_try_import_super_key(user, password, || db.load_super_key(alias, user))
