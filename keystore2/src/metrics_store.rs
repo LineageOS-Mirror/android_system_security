@@ -38,11 +38,12 @@ use android_security_metrics::aidl::android::security::metrics::{
     KeyCreationWithPurposeAndModesInfo::KeyCreationWithPurposeAndModesInfo,
     KeyOperationWithGeneralInfo::KeyOperationWithGeneralInfo,
     KeyOperationWithPurposeAndModesInfo::KeyOperationWithPurposeAndModesInfo,
-    KeyOrigin::KeyOrigin as MetricsKeyOrigin, Keystore2AtomWithOverflow::Keystore2AtomWithOverflow,
-    KeystoreAtom::KeystoreAtom, KeystoreAtomPayload::KeystoreAtomPayload,
-    Outcome::Outcome as MetricsOutcome, Purpose::Purpose as MetricsPurpose,
-    RkpError::RkpError as MetricsRkpError, RkpErrorStats::RkpErrorStats,
-    SecurityLevel::SecurityLevel as MetricsSecurityLevel, Storage::Storage as MetricsStorage,
+    KeyOrigin::KeyOrigin as MetricsKeyOrigin, KeysPerUid::KeysPerUid,
+    Keystore2AtomWithOverflow::Keystore2AtomWithOverflow, KeystoreAtom::KeystoreAtom,
+    KeystoreAtomPayload::KeystoreAtomPayload, Outcome::Outcome as MetricsOutcome,
+    Purpose::Purpose as MetricsPurpose, RkpError::RkpError as MetricsRkpError,
+    RkpErrorStats::RkpErrorStats, SecurityLevel::SecurityLevel as MetricsSecurityLevel,
+    Storage::Storage as MetricsStorage,
 };
 use anyhow::{anyhow, Context, Result};
 use log::{error, warn};
@@ -55,6 +56,14 @@ mod tests;
 // Note: Crash events are recorded at keystore restarts, based on the assumption that keystore only
 // gets restarted after a crash, during a boot cycle.
 const KEYSTORE_CRASH_COUNT_PROPERTY: &str = "keystore.crash_count";
+
+// The Keystore2KeysPerUid atom should be emitted for the top X UIDs with a key count >= Y.
+// This constant is X.
+const KEYS_PER_UID_MAX_UIDS: usize = 10;
+
+// The Keystore2KeysPerUid atom should be emitted for the top X UIDs with a key count >= Y.
+// This constant is Y.
+const KEYS_PER_UID_MIN_KEY_COUNT: usize = 5;
 
 /// Singleton for MetricsStore.
 pub static METRICS_STORE: LazyLock<MetricsStore> = LazyLock::new(Default::default);
@@ -106,11 +115,17 @@ impl MetricsStore {
     /// If any atom object does not exist in the metrics_store for the given atom ID, return an
     /// empty vector.
     pub fn get_atoms(&self, atom_id: AtomID) -> Result<Vec<KeystoreAtom>> {
-        // StorageStats is an original pulled atom (i.e. not a pushed atom converted to a
-        // pulled atom). Therefore, it is handled separately.
+        // StorageStats and KeysPerUid are handled separately since they aren't recorded
+        // in the metrics store map. Instead, the atom values are computed when the pull
+        // is triggered.
         if AtomID::STORAGE_STATS == atom_id {
             let _wp = wd::watch("MetricsStore::get_atoms calling pull_storage_stats");
             return pull_storage_stats();
+        }
+
+        if AtomID::KEYS_PER_UID == atom_id {
+            let _wp = wd::watch("MetricsStore::get_atoms calling pull_keys_per_uid");
+            return pull_keys_per_uid();
         }
 
         // Process keystore crash stats.
@@ -578,6 +593,27 @@ pub(crate) fn pull_storage_stats() -> Result<Vec<KeystoreAtom>> {
     Ok(atom_vec)
 }
 
+fn pull_keys_per_uid() -> Result<Vec<KeystoreAtom>> {
+    let counts = DB.with(|db| {
+        let mut db = db.borrow_mut();
+        db.per_uid_counts(KEYS_PER_UID_MAX_UIDS, KEYS_PER_UID_MIN_KEY_COUNT).unwrap_or_else(|e| {
+            error!("pull_keys_per_uid: failed to retrieve top per-UID key counts: {e:?}");
+            Vec::new()
+        })
+    });
+    Ok(counts
+        .into_iter()
+        .map(|(uid, count)| {
+            let key_count: i32 = count.try_into().unwrap_or_else(|e| {
+                error!("pull_keys_per_uid: key count {count} for {uid} out of range: {e:?}");
+                i32::MAX
+            });
+            let s = KeysPerUid { uid, key_count };
+            KeystoreAtom { payload: KeystoreAtomPayload::KeysPerUid(s), ..Default::default() }
+        })
+        .collect())
+}
+
 /// Log error events related to Remote Key Provisioning (RKP).
 pub fn log_rkp_error_stats(rkp_error: MetricsRkpError, sec_level: &SecurityLevel) {
     let rkp_error_stats = KeystoreAtomPayload::RkpErrorStats(RkpErrorStats {
@@ -745,6 +781,7 @@ impl_summary_enum!(AtomID, 14,
     KEY_OPERATION_WITH_GENERAL_INFO => "KEYOP_GENERAL",
     RKP_ERROR_STATS => "RKP_ERR",
     CRASH_STATS => "CRASH",
+    KEYS_PER_UID => "KEYS_PER_UID",
 );
 
 impl_summary_enum!(MetricsStorage, 28,
@@ -980,6 +1017,9 @@ impl Summary for KeystoreAtomPayload {
             }
             KeystoreAtomPayload::Keystore2AtomWithOverflow(v) => {
                 format!("atom={}", v.atom_id.show())
+            }
+            KeystoreAtomPayload::KeysPerUid(v) => {
+                format!("uid={} key_count={}", v.uid, v.key_count)
             }
         }
     }
