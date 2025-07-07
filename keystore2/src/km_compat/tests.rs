@@ -16,10 +16,10 @@
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BeginResult::BeginResult, BlockMode::BlockMode, Digest::Digest,
-    ErrorCode::ErrorCode, IKeyMintDevice::IKeyMintDevice, KeyCreationResult::KeyCreationResult,
-    KeyFormat::KeyFormat, KeyOrigin::KeyOrigin, KeyParameter::KeyParameter,
-    KeyParameterValue::KeyParameterValue, KeyPurpose::KeyPurpose, PaddingMode::PaddingMode,
-    SecurityLevel::SecurityLevel, Tag::Tag,
+    EcCurve::EcCurve, ErrorCode::ErrorCode, IKeyMintDevice::IKeyMintDevice,
+    KeyCreationResult::KeyCreationResult, KeyFormat::KeyFormat, KeyOrigin::KeyOrigin,
+    KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue, KeyPurpose::KeyPurpose,
+    PaddingMode::PaddingMode, SecurityLevel::SecurityLevel, Tag::Tag,
 };
 use android_hardware_security_keymint::binder::{self, Strong};
 use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
@@ -433,4 +433,33 @@ fn test_get_key_characteristics() {
         kp,
         KeyParameter { tag: Tag::BOOT_PATCHLEVEL, value: KeyParameterValue::Integer(_) }
     )));
+}
+
+#[test]
+fn test_soft_curve25519() {
+    ensure_compat_service_started();
+
+    // We should always be able to get the software implementation of KeyMint.
+    let compat_service: Strong<dyn IKeystoreCompatService> =
+        binder::get_interface(COMPAT_NAME).expect("Failed to get compat service");
+    let soft_dev = compat_service
+        .getKeyMintDevice(SecurityLevel::SOFTWARE)
+        .expect("Failed to get SOFTWARE KeyMint device");
+
+    let kps = vec![
+        KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::EC) },
+        KeyParameter {
+            tag: Tag::EC_CURVE,
+            value: KeyParameterValue::EcCurve(EcCurve::CURVE_25519),
+        },
+        KeyParameter { tag: Tag::DIGEST, value: KeyParameterValue::Digest(Digest::NONE) },
+        KeyParameter { tag: Tag::NO_AUTH_REQUIRED, value: KeyParameterValue::BoolValue(true) },
+        KeyParameter { tag: Tag::PURPOSE, value: KeyParameterValue::KeyPurpose(KeyPurpose::SIGN) },
+        KeyParameter { tag: Tag::CERTIFICATE_NOT_BEFORE, value: KeyParameterValue::DateTime(0) },
+        KeyParameter {
+            tag: Tag::CERTIFICATE_NOT_AFTER,
+            value: KeyParameterValue::DateTime(UNDEFINED_NOT_AFTER),
+        },
+    ];
+    assert!(soft_dev.generateKey(&kps, /* attest_key= */ None).is_ok());
 }
