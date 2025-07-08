@@ -2076,13 +2076,13 @@ impl KeystoreDB {
     /// to perform access control. The strategy depends on the `domain` field in the
     /// key descriptor.
     /// * Domain::SELINUX: The access tuple is complete and this function only loads
-    ///       the key_id for further processing.
+    ///   the key_id for further processing.
     /// * Domain::APP: Like Domain::SELINUX, but the tuple is completed by `caller_uid`
-    ///       which serves as the namespace.
+    ///   which serves as the namespace.
     /// * Domain::GRANT: The grant table is queried for the `key_id` and the
-    ///       `access_vector`.
+    ///   `access_vector`.
     /// * Domain::KEY_ID: The keyentry table is queried for the owning `domain` and
-    ///       `namespace`.
+    ///   `namespace`.
     ///
     /// In each case the information returned is sufficient to perform the access
     /// check and the key id can be used to load further key artifacts.
