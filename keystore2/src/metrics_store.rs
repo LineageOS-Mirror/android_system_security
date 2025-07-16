@@ -57,13 +57,13 @@ mod tests;
 // gets restarted after a crash, during a boot cycle.
 const KEYSTORE_CRASH_COUNT_PROPERTY: &str = "keystore.crash_count";
 
-// The Keystore2KeysPerUid atom should be emitted for the top X UIDs with a key count >= Y.
-// This constant is X.
-const KEYS_PER_UID_MAX_UIDS: usize = 10;
+/// The Keystore2KeysPerUid atom should be emitted for the top X UIDs with a key count > Y.
+/// This constant is X.
+pub const KEYS_PER_UID_MAX_UIDS: usize = 10;
 
-// The Keystore2KeysPerUid atom should be emitted for the top X UIDs with a key count >= Y.
-// This constant is Y.
-const KEYS_PER_UID_MIN_KEY_COUNT: usize = 5;
+/// The Keystore2KeysPerUid atom should be emitted for the top X UIDs with a key count > Y.
+/// This constant is Y.
+pub const KEYS_PER_UID_MIN_KEY_COUNT: usize = 5;
 
 /// Singleton for MetricsStore.
 pub static METRICS_STORE: LazyLock<MetricsStore> = LazyLock::new(Default::default);
