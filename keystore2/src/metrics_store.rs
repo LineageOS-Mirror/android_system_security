@@ -115,40 +115,53 @@ impl MetricsStore {
     /// If any atom object does not exist in the metrics_store for the given atom ID, return an
     /// empty vector.
     pub fn get_atoms(&self, atom_id: AtomID) -> Result<Vec<KeystoreAtom>> {
-        // StorageStats and KeysPerUid are handled separately since they aren't recorded
-        // in the metrics store map. Instead, the atom values are computed when the pull
-        // is triggered.
-        if AtomID::STORAGE_STATS == atom_id {
-            let _wp = wd::watch("MetricsStore::get_atoms calling pull_storage_stats");
-            return pull_storage_stats();
+        match atom_id {
+            // StorageStats, KeysPerUid, and CrashStats are handled separately since they
+            // aren't recorded in the metrics store map. Instead, the atom values are
+            // computed when the pull is triggered.
+            AtomID::STORAGE_STATS => {
+                let _wp = wd::watch("MetricsStore::get_atoms calling pull_storage_stats");
+                pull_storage_stats()
+            }
+            AtomID::KEYS_PER_UID => {
+                let _wp = wd::watch("MetricsStore::get_atoms calling pull_keys_per_uid");
+                pull_keys_per_uid()
+            }
+            AtomID::CRASH_STATS => {
+                let _wp = wd::watch("MetricsStore::get_atoms calling read_keystore_crash_count");
+                match read_keystore_crash_count()? {
+                    Some(count) => Ok(vec![KeystoreAtom {
+                        payload: KeystoreAtomPayload::CrashStats(CrashStats {
+                            count_of_crash_events: count,
+                        }),
+                        ..Default::default()
+                    }]),
+                    None => Err(anyhow!("Crash count property is not set")),
+                }
+            }
+            AtomID::KEY_CREATION_WITH_GENERAL_INFO
+            | AtomID::KEY_CREATION_WITH_AUTH_INFO
+            | AtomID::KEY_CREATION_WITH_PURPOSE_AND_MODES_INFO
+            | AtomID::KEYSTORE2_ATOM_WITH_OVERFLOW
+            | AtomID::KEY_OPERATION_WITH_PURPOSE_AND_MODES_INFO
+            | AtomID::KEY_OPERATION_WITH_GENERAL_INFO
+            | AtomID::RKP_ERROR_STATS => {
+                let metrics_store_guard = self.metrics_store.lock().unwrap();
+                metrics_store_guard.get(&atom_id).map_or(
+                    Ok(Vec::<KeystoreAtom>::new()),
+                    |atom_count_map| {
+                        Ok(atom_count_map
+                            .iter()
+                            .map(|(atom, count)| KeystoreAtom {
+                                payload: atom.clone(),
+                                count: *count,
+                            })
+                            .collect())
+                    },
+                )
+            }
+            _ => Err(anyhow!("MetricsStore::get_atoms: Unrecognized AtomID {:?}", atom_id)),
         }
-
-        if AtomID::KEYS_PER_UID == atom_id {
-            let _wp = wd::watch("MetricsStore::get_atoms calling pull_keys_per_uid");
-            return pull_keys_per_uid();
-        }
-
-        // Process keystore crash stats.
-        if AtomID::CRASH_STATS == atom_id {
-            let _wp = wd::watch("MetricsStore::get_atoms calling read_keystore_crash_count");
-            return match read_keystore_crash_count()? {
-                Some(count) => Ok(vec![KeystoreAtom {
-                    payload: KeystoreAtomPayload::CrashStats(CrashStats {
-                        count_of_crash_events: count,
-                    }),
-                    ..Default::default()
-                }]),
-                None => Err(anyhow!("Crash count property is not set")),
-            };
-        }
-
-        let metrics_store_guard = self.metrics_store.lock().unwrap();
-        metrics_store_guard.get(&atom_id).map_or(Ok(Vec::<KeystoreAtom>::new()), |atom_count_map| {
-            Ok(atom_count_map
-                .iter()
-                .map(|(atom, count)| KeystoreAtom { payload: atom.clone(), count: *count })
-                .collect())
-        })
     }
 
     /// Insert an atom object to the metrics_store indexed by the atom ID.
