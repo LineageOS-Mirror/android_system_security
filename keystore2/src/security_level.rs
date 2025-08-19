@@ -513,7 +513,11 @@ impl KeystoreSecurityLevel {
         // that NOT_BEFORE and NOT_AFTER are present.
         match params.iter().find(|kp| kp.tag == Tag::ALGORITHM) {
             Some(KeyParameter { tag: _, value: KeyParameterValue::Algorithm(Algorithm::RSA) })
-            | Some(KeyParameter { tag: _, value: KeyParameterValue::Algorithm(Algorithm::EC) }) => {
+            | Some(KeyParameter { tag: _, value: KeyParameterValue::Algorithm(Algorithm::EC) })
+            | Some(KeyParameter {
+                tag: _,
+                value: KeyParameterValue::Algorithm(Algorithm::ML_DSA),
+            }) => {
                 if !params.iter().any(|kp| kp.tag == Tag::CERTIFICATE_NOT_BEFORE) {
                     result.push(KeyParameter {
                         tag: Tag::CERTIFICATE_NOT_BEFORE,
