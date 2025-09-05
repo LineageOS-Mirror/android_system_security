@@ -51,7 +51,7 @@ use binder::wait_for_interface;
 use bssl_crypto::digest;
 use der::{DerOrd, Encode, asn1::OctetString, asn1::SetOfVec, Sequence};
 use keystore2_crypto::Password;
-use rustutils::system_properties::PropertyWatcher;
+use rustutils::android::system_properties::PropertyWatcher;
 use std::cmp::Ordering;
 use log::{error, info, warn};
 
@@ -253,7 +253,7 @@ impl Maintenance {
     /// - the `apexd.status` property is unable to be monitored
     /// - the `keystore.module_hash.sent` property cannot be updated
     pub fn check_send_module_info() {
-        if rustutils::system_properties::read_bool("keystore.module_hash.sent", false)
+        if rustutils::android::system_properties::read_bool("keystore.module_hash.sent", false)
             .unwrap_or(false)
         {
             info!("Module info has already been sent.");
@@ -309,7 +309,7 @@ impl Maintenance {
             error!("failed to set module info: {e:?}");
             panic!("Terminating due to KeyMint not accepting module info, blocking boot: {e:?}");
         });
-        rustutils::system_properties::write("keystore.module_hash.sent", "true").unwrap_or_else(|e| {
+        rustutils::android::system_properties::write("keystore.module_hash.sent", "true").unwrap_or_else(|e| {
             error!("failed to set keystore.module_hash.sent property: {e:?}");
             panic!("Terminating due to failure to set keystore.module_hash.sent property, blocking boot: {e:?}");
         });
