@@ -231,8 +231,20 @@ impl AsCborValue for i32 {
 impl AsCborValue for i64 {
     fn from_cbor_value(value: Value) -> Result<Self, CborError> {
         match value {
-            Value::Integer(i) => i.try_into().map_err(|_| CborError::InvalidValue),
+            Value::Integer(i) => i.try_into().map_err(|_| CborError::OutOfRangeIntegerValue),
             _ => crate::cbor_type_error(&value, "i64"),
+        }
+    }
+    fn to_cbor_value(self) -> Result<Value, CborError> {
+        Ok(Value::Integer(self.into()))
+    }
+}
+
+impl AsCborValue for u32 {
+    fn from_cbor_value(value: Value) -> Result<Self, CborError> {
+        match value {
+            Value::Integer(i) => i.try_into().map_err(|_| CborError::OutOfRangeIntegerValue),
+            _ => crate::cbor_type_error(&value, "u32"),
         }
     }
     fn to_cbor_value(self) -> Result<Value, CborError> {
