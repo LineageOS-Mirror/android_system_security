@@ -20,10 +20,13 @@ extern crate alloc;
 /// Re-export of crate used for CBOR encoding.
 pub use ciborium as cbor;
 
+pub use alloc::vec;
 use alloc::vec::Vec;
-use cbor::value::Value;
+pub use cbor::value::Value;
+pub use enumn::N;
 
 pub mod mem;
+pub mod operations;
 
 /// Marker structure indicating that the EOF was encountered when reading CBOR data.
 #[derive(Debug)]

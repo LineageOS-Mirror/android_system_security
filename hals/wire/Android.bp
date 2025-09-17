@@ -29,6 +29,7 @@ rust_library {
         "libciborium_io",
     ],
     proc_macros: [
+        "libenumn",
         "libhal_wire_derive",
     ],
 }
@@ -45,6 +46,7 @@ rust_library_rlib {
         "libciborium_io_nostd",
     ],
     proc_macros: [
+        "libenumn",
         "libhal_wire_derive",
     ],
     prefer_rlib: true,
