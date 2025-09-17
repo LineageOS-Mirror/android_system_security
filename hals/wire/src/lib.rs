@@ -27,6 +27,7 @@ pub use enumn::N;
 
 pub mod mem;
 pub mod operations;
+pub mod types;
 
 /// Marker structure indicating that the EOF was encountered when reading CBOR data.
 #[derive(Debug)]
