@@ -1438,7 +1438,7 @@ impl KeystoreDB {
                       WHERE keyentryid NOT IN (
                         SELECT id FROM persistent.keyentry
                       )
-                      LIMIT 100000);",
+                      LIMIT 5000);",
                     params![BlobState::Orphaned],
                 )
                 .context("Trying to mark orphaned blobs")
