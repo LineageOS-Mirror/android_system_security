@@ -1199,6 +1199,12 @@ impl KeystoreDB {
         conn.execute("PRAGMA persistent.cache_size = -500;", params![])
             .context("Failed to decrease cache size for persistent db")?;
 
+        if keystore2_flags::extra_sqlite_sync() {
+            log::info!("Setting synchronous=EXTRA");
+            conn.execute("PRAGMA persistent.synchronous = EXTRA;", params![])
+                .context("Failed to set synchronous mode to EXTRA")?;
+        }
+
         Ok(conn)
     }
 
