@@ -108,11 +108,7 @@ impl AuthorizationManager {
         ))
     }
 
-    fn add_auth_token(&self, auth_token: &HardwareAuthToken) -> Result<()> {
-        // Check keystore permission.
-        check_keystore_permission(KeystorePerm::AddAuth)
-            .context(ks_err!("caller missing AddAuth permissions"))?;
-
+    fn add_auth_token(&self, auth_token: &HardwareAuthToken) {
         info!(
             "add_auth_token(challenge={}, userId={}, authId={}, authType={:#x}, timestamp={}ms)",
             auth_token.challenge,
@@ -126,22 +122,23 @@ impl AuthorizationManager {
         }
 
         ENFORCEMENTS.add_auth_token(auth_token.clone());
-        Ok(())
     }
 
-    fn on_device_unlocked(&self, user: AndroidUserId, password: Option<Password>) -> Result<()> {
+    fn on_device_unlocked(&self, user: AndroidUserId, password: Option<Password>) {
         info!("on_device_unlocked({user:?}, password.is_some()={})", password.is_some(),);
-        check_keystore_permission(KeystorePerm::Unlock)
-            .context(ks_err!("caller missing Unlock permissions"))?;
         ENFORCEMENTS.set_device_locked(user, false);
 
         let mut skm = SUPER_KEY.write().unwrap();
         if let Some(password) = password {
-            DB.with(|db| skm.unlock_user(&mut db.borrow_mut(), &LEGACY_IMPORTER, user, &password))
-                .context(ks_err!("Unlock with password."))
-        } else {
+            if let Err(e) = DB
+                .with(|db| skm.unlock_user(&mut db.borrow_mut(), &LEGACY_IMPORTER, user, &password))
+            {
+                error!("Unlock with password failed for {user:?}: {e:?}");
+            }
+        } else if let Err(e) =
             DB.with(|db| skm.try_unlock_user_with_biometric(&mut db.borrow_mut(), user))
-                .context(ks_err!("try_unlock_user_with_biometric failed for {user:?}"))
+        {
+            error!("try_unlock_user_with_biometric failed for {user:?}: {e:?}");
         }
     }
 
@@ -150,15 +147,10 @@ impl AuthorizationManager {
         user: AndroidUserId,
         unlocking_sids: &[SecureUserId],
         weak_unlock_enabled: bool,
-    ) -> Result<()> {
+    ) {
         info!(
             "on_device_locked({user:?}, unlocking_sids={unlocking_sids:?}, weak_unlock_enabled={weak_unlock_enabled})",
         );
-        check_keystore_permission(KeystorePerm::Lock)
-            .context(ks_err!("caller missing Lock permission"))?;
-        if unlocking_sids.iter().any(|sid| sid.0 == 0) {
-            error!("Biometric-unlocking SIDs includes a zero SID, indicating a biometric framework problem");
-        }
         ENFORCEMENTS.set_device_locked(user, true);
         let mut skm = SUPER_KEY.write().unwrap();
         DB.with(|db| {
@@ -169,41 +161,29 @@ impl AuthorizationManager {
                 weak_unlock_enabled,
             );
         });
-        Ok(())
     }
 
-    fn on_user_storage_locked(&self, user: AndroidUserId) -> Result<()> {
+    fn on_user_storage_locked(&self, user: AndroidUserId) {
         log::info!("on_user_storage_locked({user:?})");
-
-        check_keystore_permission(KeystorePerm::Lock)
-            .context(ks_err!("caller missing Lock permission"))?;
 
         // Delete super key in cache, if exists.
         SUPER_KEY.write().unwrap().forget_all_keys_for_user(user);
-
-        Ok(())
     }
 
-    fn on_weak_unlock_methods_expired(&self, user: AndroidUserId) -> Result<()> {
+    fn on_weak_unlock_methods_expired(&self, user: AndroidUserId) {
         info!("on_weak_unlock_methods_expired({user:?})");
-        check_keystore_permission(KeystorePerm::Lock)
-            .context(ks_err!("caller missing Lock permission"))?;
         SUPER_KEY
             .write()
             .unwrap()
             .wipe_unlocked_device_required_keys(user, WipeKeyOption::PlaintextOnly);
-        Ok(())
     }
 
-    fn on_non_lskf_unlock_methods_expired(&self, user: AndroidUserId) -> Result<()> {
+    fn on_non_lskf_unlock_methods_expired(&self, user: AndroidUserId) {
         info!("on_non_lskf_unlock_methods_expired({user:?})");
-        check_keystore_permission(KeystorePerm::Lock)
-            .context(ks_err!("caller missing Lock permission"))?;
         SUPER_KEY
             .write()
             .unwrap()
             .wipe_unlocked_device_required_keys(user, WipeKeyOption::PlaintextAndBiometric);
-        Ok(())
     }
 
     fn get_auth_tokens_for_credstore(
@@ -212,11 +192,6 @@ impl AuthorizationManager {
         sid: SecureUserId,
         auth_token_max_age_millis: i64,
     ) -> Result<AuthorizationTokens> {
-        // Check permission. Function should return if this failed. Therefore having '?' at the end
-        // is very important.
-        check_keystore_permission(KeystorePerm::GetAuthToken)
-            .context(ks_err!("caller missing GetAuthToken permission"))?;
-
         // If the challenge is zero, return error
         if challenge.0 == 0 {
             return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT))
@@ -233,10 +208,6 @@ impl AuthorizationManager {
         sid: SecureUserId,
         auth_types: &[HardwareAuthenticatorType],
     ) -> Result<i64> {
-        // Check keystore permission.
-        check_keystore_permission(KeystorePerm::GetLastAuthTime)
-            .context(ks_err!("caller missing GetLastAuthTime permission"))?;
-
         let mut max_time: i64 = -1;
         for auth_type in auth_types.iter() {
             if let Some(time) = ENFORCEMENTS.get_last_auth_time(sid, *auth_type) {
@@ -262,13 +233,23 @@ impl Interface for AuthorizationManager {}
 impl IKeystoreAuthorization for AuthorizationManager {
     fn addAuthToken(&self, auth_token: &HardwareAuthToken) -> BinderResult<()> {
         let _wp = wd::watch("IKeystoreAuthorization::addAuthToken");
-        self.add_auth_token(auth_token).map_err(into_logged_binder)
+        check_keystore_permission(KeystorePerm::AddAuth)
+            .context(ks_err!("caller missing AddAuth permissions"))
+            .map_err(into_logged_binder)?;
+
+        self.add_auth_token(auth_token);
+        Ok(())
     }
 
     fn onDeviceUnlocked(&self, user_id: i32, password: Option<&[u8]>) -> BinderResult<()> {
-        let user = AndroidUserId(user_id);
         let _wp = wd::watch("IKeystoreAuthorization::onDeviceUnlocked");
-        self.on_device_unlocked(user, password.map(|pw| pw.into())).map_err(into_logged_binder)
+        check_keystore_permission(KeystorePerm::Unlock)
+            .context(ks_err!("caller missing Unlock permissions"))
+            .map_err(into_logged_binder)?;
+
+        let user = AndroidUserId(user_id);
+        self.on_device_unlocked(user, password.map(|pw| pw.into()));
+        Ok(())
     }
 
     fn onDeviceLocked(
@@ -277,29 +258,54 @@ impl IKeystoreAuthorization for AuthorizationManager {
         unlocking_sids: &[i64],
         weak_unlock_enabled: bool,
     ) -> BinderResult<()> {
-        let user = AndroidUserId(user_id);
-        let unlocking_sids: Vec<_> = unlocking_sids.iter().map(|sid| SecureUserId(*sid)).collect();
         let _wp = wd::watch("IKeystoreAuthorization::onDeviceLocked");
-        self.on_device_locked(user, &unlocking_sids, weak_unlock_enabled)
-            .map_err(into_logged_binder)
+        check_keystore_permission(KeystorePerm::Lock)
+            .context(ks_err!("caller missing Lock permission"))
+            .map_err(into_logged_binder)?;
+
+        let user = AndroidUserId(user_id);
+        let unlocking_sids: Vec<_> = unlocking_sids.iter().map(|sid| {
+            if *sid == 0 {
+                error!("Biometric-unlocking SIDs includes a zero SID, indicating a biometric framework problem");
+            }
+            SecureUserId(*sid)
+        }).collect();
+
+        self.on_device_locked(user, &unlocking_sids, weak_unlock_enabled);
+        Ok(())
     }
 
     fn onUserStorageLocked(&self, user_id: i32) -> BinderResult<()> {
-        let user = AndroidUserId(user_id);
         let _wp = wd::watch("IKeystoreMaintenance::onUserStorageLocked");
-        self.on_user_storage_locked(user).map_err(into_logged_binder)
+        check_keystore_permission(KeystorePerm::Lock)
+            .context(ks_err!("caller missing Lock permission"))
+            .map_err(into_logged_binder)?;
+
+        let user = AndroidUserId(user_id);
+        self.on_user_storage_locked(user);
+        Ok(())
     }
 
     fn onWeakUnlockMethodsExpired(&self, user_id: i32) -> BinderResult<()> {
-        let user = AndroidUserId(user_id);
         let _wp = wd::watch("IKeystoreAuthorization::onWeakUnlockMethodsExpired");
-        self.on_weak_unlock_methods_expired(user).map_err(into_logged_binder)
+        check_keystore_permission(KeystorePerm::Lock)
+            .context(ks_err!("caller missing Lock permission"))
+            .map_err(into_logged_binder)?;
+
+        let user = AndroidUserId(user_id);
+        self.on_weak_unlock_methods_expired(user);
+        Ok(())
     }
 
     fn onNonLskfUnlockMethodsExpired(&self, user_id: i32) -> BinderResult<()> {
-        let user = AndroidUserId(user_id);
         let _wp = wd::watch("IKeystoreAuthorization::onNonLskfUnlockMethodsExpired");
-        self.on_non_lskf_unlock_methods_expired(user).map_err(into_logged_binder)
+        check_keystore_permission(KeystorePerm::Lock)
+            .context(ks_err!("caller missing Lock permission"))
+            .map_err(into_logged_binder)?;
+
+        let user = AndroidUserId(user_id);
+        self.on_non_lskf_unlock_methods_expired(user);
+        Ok(())
     }
 
     fn getAuthTokensForCredStore(
@@ -308,9 +314,13 @@ impl IKeystoreAuthorization for AuthorizationManager {
         secure_user_id: i64,
         auth_token_max_age_millis: i64,
     ) -> binder::Result<AuthorizationTokens> {
+        let _wp = wd::watch("IKeystoreAuthorization::getAuthTokensForCredStore");
+        check_keystore_permission(KeystorePerm::GetAuthToken)
+            .context(ks_err!("caller missing GetAuthToken permission"))
+            .map_err(into_logged_binder)?;
+
         let sid = SecureUserId(secure_user_id);
         let challenge = Challenge(challenge);
-        let _wp = wd::watch("IKeystoreAuthorization::getAuthTokensForCredStore");
         self.get_auth_tokens_for_credstore(challenge, sid, auth_token_max_age_millis)
             .map_err(into_logged_binder)
     }
@@ -320,6 +330,11 @@ impl IKeystoreAuthorization for AuthorizationManager {
         secure_user_id: i64,
         auth_types: &[HardwareAuthenticatorType],
     ) -> binder::Result<i64> {
+        let _wp = wd::watch("IKeystoreAuthorization::getLastAuthTime");
+        check_keystore_permission(KeystorePerm::GetLastAuthTime)
+            .context(ks_err!("caller missing GetLastAuthTime permission"))
+            .map_err(into_logged_binder)?;
+
         let sid = SecureUserId(secure_user_id);
         self.get_last_auth_time(sid, auth_types).map_err(into_logged_binder)
     }
