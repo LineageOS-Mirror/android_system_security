@@ -36,7 +36,7 @@ use android_security_authorization::binder::{
 };
 use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode as KsResponseCode;
 use anyhow::{Context, Result};
-use keystore2_crypto::Password;
+use keystore2_crypto::{zvec::ZVec, Password};
 use keystore2_selinux as selinux;
 use log::{error, info};
 
@@ -95,37 +95,65 @@ pub fn into_logged_binder(e: anyhow::Error) -> BinderStatus {
     }
 }
 
-/// This struct is defined to implement the aforementioned AIDL interface.
-/// As of now, it is an empty struct.
-pub struct AuthorizationManager;
+/// This struct is defined to implement the `IKeystoreAuthorization` AIDL interface.
+pub struct AuthorizationManager {
+    lock_state: DeviceLockState,
+}
 
-impl AuthorizationManager {
-    /// Create a new instance of Keystore Authorization service.
-    pub fn new_native_binder() -> Result<Strong<dyn IKeystoreAuthorization>> {
-        Ok(BnKeystoreAuthorization::new_binder(
-            Self,
-            BinderFeatures { set_requesting_sid: true, ..BinderFeatures::default() },
-        ))
-    }
+/// Implementation of the parts of `IKeystoreAuthorization` that track device lock status.
+pub struct DeviceLockState;
 
-    fn add_auth_token(&self, auth_token: &HardwareAuthToken) {
-        info!(
-            "add_auth_token(challenge={}, userId={}, authId={}, authType={:#x}, timestamp={}ms)",
-            auth_token.challenge,
-            auth_token.userId,
-            auth_token.authenticatorId,
-            auth_token.authenticatorType.0,
-            auth_token.timestamp.milliSeconds,
-        );
-        if auth_token.userId == 0 {
-            error!("Auth token has zero GK SID, indicating an authenticator problem");
+/// Pending notifications about the lock state of the device for a user.
+pub struct LockStateNotification {
+    /// Android user that the notification pertains to.
+    user: AndroidUserId,
+    /// Lock state
+    state: LockState,
+}
+
+/// Lock state for a user.
+pub enum LockState {
+    /// Device has been unlocked.
+    DeviceUnlocked {
+        /// Secret derived from synthetic password, if available.
+        password: Option<ZVec>,
+    },
+    /// Device has been locked.
+    DeviceLocked {
+        /// SIDs of class 3 biometrics that can unlock the device for the user.
+        unlocking_sids: Vec<SecureUserId>,
+        /// Whether a weak unlock method can unlock the device for the user.
+        weak_unlock_enabled: bool,
+    },
+    /// User's CE storage has been locked.
+    UserStorageLocked,
+    /// Weak unlock methods have expired.
+    WeakUnlockMethodsExpired,
+    /// Non-LSKF unlock methods have expired.
+    NonLskfUnlockMethodsExpired,
+}
+
+impl DeviceLockState {
+    /// Update the lock state based on the given notification.
+    fn update(&self, op: LockStateNotification) {
+        match op.state {
+            LockState::DeviceUnlocked { password } => {
+                self.on_device_unlocked(op.user, password.map(Password::Owned))
+            }
+            LockState::DeviceLocked { unlocking_sids, weak_unlock_enabled } => {
+                self.on_device_locked(op.user, &unlocking_sids, weak_unlock_enabled)
+            }
+            LockState::UserStorageLocked => self.on_user_storage_locked(op.user),
+            LockState::WeakUnlockMethodsExpired => self.on_weak_unlock_methods_expired(op.user),
+            LockState::NonLskfUnlockMethodsExpired => {
+                self.on_non_lskf_unlock_methods_expired(op.user)
+            }
         }
-
-        ENFORCEMENTS.add_auth_token(auth_token.clone());
     }
 
     fn on_device_unlocked(&self, user: AndroidUserId, password: Option<Password>) {
-        info!("on_device_unlocked({user:?}, password.is_some()={})", password.is_some(),);
+        info!("on_device_unlocked({user:?}, password.is_some()={})", password.is_some());
+        let _wp = wd::watch("DeviceLockState::on_device_unlocked");
         ENFORCEMENTS.set_device_locked(user, false);
 
         let mut skm = SUPER_KEY.write().unwrap();
@@ -149,8 +177,9 @@ impl AuthorizationManager {
         weak_unlock_enabled: bool,
     ) {
         info!(
-            "on_device_locked({user:?}, unlocking_sids={unlocking_sids:?}, weak_unlock_enabled={weak_unlock_enabled})",
+            "on_device_locked({user:?}, unlocking_sids={unlocking_sids:?}, weak_unlock_enabled={weak_unlock_enabled})"
         );
+        let _wp = wd::watch("DeviceLockState::on_device_locked");
         ENFORCEMENTS.set_device_locked(user, true);
         let mut skm = SUPER_KEY.write().unwrap();
         DB.with(|db| {
@@ -165,6 +194,7 @@ impl AuthorizationManager {
 
     fn on_user_storage_locked(&self, user: AndroidUserId) {
         log::info!("on_user_storage_locked({user:?})");
+        let _wp = wd::watch("DeviceLockState::on_user_storage_locked");
 
         // Delete super key in cache, if exists.
         SUPER_KEY.write().unwrap().forget_all_keys_for_user(user);
@@ -172,6 +202,7 @@ impl AuthorizationManager {
 
     fn on_weak_unlock_methods_expired(&self, user: AndroidUserId) {
         info!("on_weak_unlock_methods_expired({user:?})");
+        let _wp = wd::watch("DeviceLockState::on_weak_unlock_methods_expired");
         SUPER_KEY
             .write()
             .unwrap()
@@ -180,10 +211,41 @@ impl AuthorizationManager {
 
     fn on_non_lskf_unlock_methods_expired(&self, user: AndroidUserId) {
         info!("on_non_lskf_unlock_methods_expired({user:?})");
+        let _wp = wd::watch("DeviceLockState::on_non_lskf_unlock_methods_expired");
         SUPER_KEY
             .write()
             .unwrap()
             .wipe_unlocked_device_required_keys(user, WipeKeyOption::PlaintextAndBiometric);
+    }
+}
+
+impl AuthorizationManager {
+    /// Create a new instance of Keystore Authorization service.
+    pub fn new_native_binder() -> Result<Strong<dyn IKeystoreAuthorization>> {
+        Ok(BnKeystoreAuthorization::new_binder(
+            Self { lock_state: DeviceLockState },
+            BinderFeatures { set_requesting_sid: true, ..BinderFeatures::default() },
+        ))
+    }
+
+    fn update_lock_state(&self, op: LockStateNotification) {
+        self.lock_state.update(op)
+    }
+
+    fn add_auth_token(&self, auth_token: &HardwareAuthToken) {
+        info!(
+            "add_auth_token(challenge={}, userId={}, authId={}, authType={:#x}, timestamp={}ms)",
+            auth_token.challenge,
+            auth_token.userId,
+            auth_token.authenticatorId,
+            auth_token.authenticatorType.0,
+            auth_token.timestamp.milliSeconds,
+        );
+        if auth_token.userId == 0 {
+            error!("Auth token has zero GK SID, indicating an authenticator problem");
+        }
+
+        ENFORCEMENTS.add_auth_token(auth_token.clone());
     }
 
     fn get_auth_tokens_for_credstore(
@@ -248,7 +310,16 @@ impl IKeystoreAuthorization for AuthorizationManager {
             .map_err(into_logged_binder)?;
 
         let user = AndroidUserId(user_id);
-        self.on_device_unlocked(user, password.map(|pw| pw.into()));
+        let password = match password {
+            None => None,
+            Some(slice) => Some(
+                ZVec::try_from(slice)
+                    .context("failed to create ZVec!")
+                    .map_err(into_logged_binder)?,
+            ),
+        };
+        let op = LockStateNotification { user, state: LockState::DeviceUnlocked { password } };
+        self.update_lock_state(op);
         Ok(())
     }
 
@@ -270,8 +341,11 @@ impl IKeystoreAuthorization for AuthorizationManager {
             }
             SecureUserId(*sid)
         }).collect();
-
-        self.on_device_locked(user, &unlocking_sids, weak_unlock_enabled);
+        let op = LockStateNotification {
+            user,
+            state: LockState::DeviceLocked { unlocking_sids, weak_unlock_enabled },
+        };
+        self.update_lock_state(op);
         Ok(())
     }
 
@@ -282,7 +356,8 @@ impl IKeystoreAuthorization for AuthorizationManager {
             .map_err(into_logged_binder)?;
 
         let user = AndroidUserId(user_id);
-        self.on_user_storage_locked(user);
+        let op = LockStateNotification { user, state: LockState::UserStorageLocked };
+        self.update_lock_state(op);
         Ok(())
     }
 
@@ -293,7 +368,8 @@ impl IKeystoreAuthorization for AuthorizationManager {
             .map_err(into_logged_binder)?;
 
         let user = AndroidUserId(user_id);
-        self.on_weak_unlock_methods_expired(user);
+        let op = LockStateNotification { user, state: LockState::WeakUnlockMethodsExpired };
+        self.update_lock_state(op);
         Ok(())
     }
 
@@ -304,7 +380,8 @@ impl IKeystoreAuthorization for AuthorizationManager {
             .map_err(into_logged_binder)?;
 
         let user = AndroidUserId(user_id);
-        self.on_non_lskf_unlock_methods_expired(user);
+        let op = LockStateNotification { user, state: LockState::NonLskfUnlockMethodsExpired };
+        self.update_lock_state(op);
         Ok(())
     }
 
