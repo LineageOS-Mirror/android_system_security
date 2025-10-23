@@ -213,7 +213,7 @@ static KMV1::KeyPurpose convert(V4_0::KeyPurpose p) {
     }
 }
 
-static std::optional<V4_0::Algorithm> convert(KMV1::Algorithm a) {
+static V4_0::Algorithm convert(KMV1::Algorithm a) {
     switch (a) {
     case KMV1::Algorithm::RSA:
         return V4_0::Algorithm::RSA;
@@ -225,9 +225,6 @@ static std::optional<V4_0::Algorithm> convert(KMV1::Algorithm a) {
         return V4_0::Algorithm::TRIPLE_DES;
     case KMV1::Algorithm::HMAC:
         return V4_0::Algorithm::HMAC;
-    default:
-        // Can end up here because KeyMint may have Algorithm values not in KM4.
-        return {};
     }
 }
 
@@ -465,10 +462,7 @@ static V4_0::KeyParameter convertKeyParameterToLegacy(const KMV1::KeyParameter& 
         break;
     case KMV1::Tag::ALGORITHM:
         if (auto v = KMV1::authorizationValue(KMV1::TAG_ALGORITHM, kp)) {
-            std::optional<V4_0::Algorithm> algorithm = convert(v->get());
-            if (algorithm) {
-                return V4_0::makeKeyParameter(V4_0::TAG_ALGORITHM, algorithm.value());
-            }
+            return V4_0::makeKeyParameter(V4_0::TAG_ALGORITHM, convert(v->get()));
         }
         break;
     case KMV1::Tag::KEY_SIZE:
@@ -760,12 +754,8 @@ static V4_0::KeyParameter convertKeyParameterToLegacy(const KMV1::KeyParameter& 
         break;
     case KMV1::Tag::ATTESTATION_ID_SECOND_IMEI:
         // This tag doesn't exist in KM < KeyMint 3.
-        break;
     case KMV1::Tag::MODULE_HASH:
         // This tag doesn't exist in KM < KeyMint 4.
-        break;
-    case KMV1::Tag::ML_DSA_VARIANT:
-        // This tag doesn't exist in KM < KeyMint 5.
         break;
     case KMV1::Tag::MAX_BOOT_LEVEL:
         // Does not exist in API level 30 or below.
