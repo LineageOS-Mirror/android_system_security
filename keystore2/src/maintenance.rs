@@ -271,9 +271,6 @@ impl Maintenance {
     /// Watch the `apexd.status` system property, and read apex module information once
     /// it is `activated`.
     ///
-    /// Note that init.rc expects `apexd.status` == `activated` if `keystore.module_hash.sent` ==
-    /// true.
-    ///
     /// Blocks waiting for system property changes, so must be run in its own thread.
     fn watch_apex_info() -> Result<()> {
         let apex_prop = "apexd.status";
