@@ -35,8 +35,8 @@
 using aidl::android::hardware::drm::IDrmFactory;
 using aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent;
 using aidl::android::hardware::security::keymint::RpcHardwareInfo;
+using aidl::android::hardware::security::keymint::remote_prov::AVF_INSTANCE_NAME;
 using aidl::android::hardware::security::keymint::remote_prov::jsonEncodeCsrWithBuild;
-using aidl::android::hardware::security::keymint::remote_prov::RKPVM_INSTANCE_NAME;
 
 DEFINE_string(output_format, "build+csr", "How to format the output. Defaults to 'build+csr'.");
 DEFINE_bool(self_test, true,
@@ -121,7 +121,7 @@ void getCsrForIRpc(const char* descriptor, const char* name, IRemotelyProvisione
     auto fullName = getFullServiceName(descriptor, name);
     // AVF RKP HAL is not always supported, so we need to check if it is supported before
     // generating the CSR.
-    if (fullName == RKPVM_INSTANCE_NAME) {
+    if (fullName == AVF_INSTANCE_NAME) {
         RpcHardwareInfo hwInfo;
         auto status = irpc->getHardwareInfo(&hwInfo);
         if (!status.isOk()) {
@@ -137,7 +137,7 @@ void getCsrForIRpc(const char* descriptor, const char* name, IRemotelyProvisione
         exit(-1);
     }
 
-    if (fullName != RKPVM_INSTANCE_NAME) {
+    if (fullName != AVF_INSTANCE_NAME) {
         writeOutput(std::string(name), *request);
     }
 }
