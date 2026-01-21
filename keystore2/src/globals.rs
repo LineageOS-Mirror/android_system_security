@@ -80,7 +80,7 @@ pub fn create_thread_local_db() -> KeystoreDB {
 
     DB_INIT.call_once(|| {
         info!("Touching Keystore 2.0 database for this first time since boot.");
-        let orphan_limit = 5_000;
+        let orphan_limit = if keystore2_flags::faster_rebind_cleanup() { 100_000 } else { 5_000 };
         info!("Calling cleanup_leftovers({orphan_limit})");
         let n = db.cleanup_leftovers(orphan_limit).expect("Failed to cleanup database on startup");
         if n != 0 {
