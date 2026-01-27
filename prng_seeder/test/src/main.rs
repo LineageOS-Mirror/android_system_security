@@ -21,9 +21,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use log::{debug, info, LevelFilter};
 use nix::sys::socket::{connect, socket, AddressFamily, SockFlag, SockType, UnixAddr};
+use std::collections::HashSet;
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
 /// Amount of entropy to read. Set to match the value of `DAEMON_RESPONSE_LEN` in
@@ -47,6 +49,9 @@ struct Options {
     android_log: bool,
 }
 
+/// Accumulated set of observed chunks of entropy.
+static SEEN: LazyLock<Mutex<HashSet<Vec<u8>>>> = LazyLock::new(Default::default);
+
 fn get_data(idx: usize, iterations: usize, addr: PathBuf) -> Result<()> {
     info!("[{idx}]: perform {iterations} retrievals from {addr:?}");
     let start = Instant::now();
@@ -68,6 +73,18 @@ fn get_data(idx: usize, iterations: usize, addr: PathBuf) -> Result<()> {
             "[{idx}].{i}: retrieved {size} bytes of data in {iter_time:?}: {}...",
             hex::encode(&buffer[0..prefix])
         );
+
+        if !buffer.is_empty() {
+            // Any nonempty data that is returned should be unique.
+            let mut seen = SEEN.lock().unwrap();
+            if seen.contains(&buffer) {
+                panic!(
+                    "[{idx}.{i}]: same entropy chunk observed more than once! {}",
+                    hex::encode(&buffer)
+                );
+            }
+            seen.insert(buffer);
+        }
     }
     info!("[{idx}]: performed {iterations} retrievals {:?}", start.elapsed());
     Ok(())
