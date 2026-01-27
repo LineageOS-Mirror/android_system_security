@@ -14,7 +14,7 @@
 
 //! Tests for user authentication interactions (via `IKeystoreAuthorization`).
 
-use crate::keystore2_client_test_utils::{
+use crate::test_utils::{
     BarrierReached, BarrierReachedWithData,
 };
 use android_security_authorization::aidl::android::security::authorization::{
