@@ -196,6 +196,14 @@ impl AsyncTask {
         let timeout_period = state.timeout;
 
         state.thread = Some(thread::spawn(move || {
+            // This spawned thread may inherit the priority of the thread that triggered the async
+            // work, and that triggering thread may in turn have inherited the priority of a client
+            // via a Binder transaction.  Make sure this new thread's priority is at least the
+            // default.
+            if keystore2_flags::renice_async_task() {
+                crate::utils::self_renice(0);
+            }
+
             let (ref condvar, ref state) = *cloned_state;
 
             enum Action {
