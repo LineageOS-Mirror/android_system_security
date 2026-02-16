@@ -99,7 +99,7 @@ pub fn into_logged_binder(e: anyhow::Error) -> BinderStatus {
 /// This struct is defined to implement the `IKeystoreAuthorization` AIDL interface.
 pub enum AuthorizationManager {
     /// Device lock notifications are handled synchronously.
-    Synchronous(DeviceLockState),
+    Synchronous,
     /// Device lock notifications are handled asynchronously by a separate thread, communicating via
     /// the given channel.
     Asynchronous(crossbeam_channel::Sender<LockStateNotification>),
@@ -144,18 +144,18 @@ pub enum LockState {
 
 impl DeviceLockState {
     /// Update the lock state based on the given notification.
-    fn update(&self, op: LockStateNotification) {
+    fn update(op: LockStateNotification) {
         match op.state {
             LockState::DeviceUnlocked { password } => {
-                self.on_device_unlocked(op.user, password.map(Password::Owned))
+                Self::on_device_unlocked(op.user, password.map(Password::Owned))
             }
             LockState::DeviceLocked { unlocking_sids, weak_unlock_enabled } => {
-                self.on_device_locked(op.user, &unlocking_sids, weak_unlock_enabled)
+                Self::on_device_locked(op.user, &unlocking_sids, weak_unlock_enabled)
             }
-            LockState::UserStorageLocked => self.on_user_storage_locked(op.user),
-            LockState::WeakUnlockMethodsExpired => self.on_weak_unlock_methods_expired(op.user),
+            LockState::UserStorageLocked => Self::on_user_storage_locked(op.user),
+            LockState::WeakUnlockMethodsExpired => Self::on_weak_unlock_methods_expired(op.user),
             LockState::NonLskfUnlockMethodsExpired => {
-                self.on_non_lskf_unlock_methods_expired(op.user)
+                Self::on_non_lskf_unlock_methods_expired(op.user)
             }
             LockState::Sync(pair) => {
                 let (lock, cv) = &*pair;
@@ -167,7 +167,7 @@ impl DeviceLockState {
         }
     }
 
-    fn on_device_unlocked(&self, user: AndroidUserId, password: Option<Password>) {
+    fn on_device_unlocked(user: AndroidUserId, password: Option<Password>) {
         info!("on_device_unlocked({user:?}, password.is_some()={})", password.is_some());
         let _wp = wd::watch("DeviceLockState::on_device_unlocked");
         ENFORCEMENTS.set_device_locked(user, false);
@@ -187,7 +187,6 @@ impl DeviceLockState {
     }
 
     fn on_device_locked(
-        &self,
         user: AndroidUserId,
         unlocking_sids: &[SecureUserId],
         weak_unlock_enabled: bool,
@@ -208,7 +207,7 @@ impl DeviceLockState {
         });
     }
 
-    fn on_user_storage_locked(&self, user: AndroidUserId) {
+    fn on_user_storage_locked(user: AndroidUserId) {
         log::info!("on_user_storage_locked({user:?})");
         let _wp = wd::watch("DeviceLockState::on_user_storage_locked");
 
@@ -216,7 +215,7 @@ impl DeviceLockState {
         SUPER_KEY.write().unwrap().forget_all_keys_for_user(user);
     }
 
-    fn on_weak_unlock_methods_expired(&self, user: AndroidUserId) {
+    fn on_weak_unlock_methods_expired(user: AndroidUserId) {
         info!("on_weak_unlock_methods_expired({user:?})");
         let _wp = wd::watch("DeviceLockState::on_weak_unlock_methods_expired");
         SUPER_KEY
@@ -225,7 +224,7 @@ impl DeviceLockState {
             .wipe_unlocked_device_required_keys(user, WipeKeyOption::PlaintextOnly);
     }
 
-    fn on_non_lskf_unlock_methods_expired(&self, user: AndroidUserId) {
+    fn on_non_lskf_unlock_methods_expired(user: AndroidUserId) {
         info!("on_non_lskf_unlock_methods_expired({user:?})");
         let _wp = wd::watch("DeviceLockState::on_non_lskf_unlock_methods_expired");
         SUPER_KEY
@@ -245,18 +244,17 @@ impl AuthorizationManager {
             ENFORCEMENTS.install_lock_state_channel(send.clone());
             std::thread::spawn(move || {
                 info!("starting async authorization notification processing thread");
-                let lock_state = DeviceLockState;
                 loop {
                     let op = recv.recv().unwrap_or_else(|e| {
                         panic!("Async operation thread channel hung up! {e:?}")
                     });
                     info!("process {op:?} from notification queue");
-                    lock_state.update(op);
+                    DeviceLockState::update(op);
                 }
             });
             Self::Asynchronous(send)
         } else {
-            Self::Synchronous(DeviceLockState)
+            Self::Synchronous
         };
         Ok(BnKeystoreAuthorization::new_binder(
             mgr,
@@ -273,9 +271,9 @@ impl AuthorizationManager {
                     panic!("Failed to send auth operation to async thread! {e:?}");
                 }
             }
-            Self::Synchronous(lock_state) => {
+            Self::Synchronous => {
                 // Act on the notification operation immediately.
-                lock_state.update(op)
+                DeviceLockState::update(op)
             }
         }
     }
