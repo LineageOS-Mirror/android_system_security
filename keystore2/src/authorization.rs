@@ -14,6 +14,7 @@
 
 //! This module implements IKeystoreAuthorization AIDL interface.
 
+use crate::async_task::AsyncTask;
 use crate::error::anyhow_error_to_cstring;
 use crate::error::Error as KeystoreError;
 use crate::globals::{DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY};
@@ -39,7 +40,7 @@ use anyhow::{Context, Result};
 use keystore2_crypto::{zvec::ZVec, Password};
 use keystore2_selinux as selinux;
 use log::{error, info};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 
 /// This is the Authorization error type, it wraps binder exceptions and the
 /// Authorization ResponseCode
@@ -100,9 +101,9 @@ pub fn into_logged_binder(e: anyhow::Error) -> BinderStatus {
 pub enum AuthorizationManager {
     /// Device lock notifications are handled synchronously.
     Synchronous,
-    /// Device lock notifications are handled asynchronously by a separate thread, communicating via
-    /// the given channel.
-    Asynchronous(crossbeam_channel::Sender<LockStateNotification>),
+    /// Device lock notifications are handled asynchronously by a separate thread, started on
+    /// demand.
+    Asynchronous(Arc<AsyncTask>),
 }
 
 /// Implementation of the parts of `IKeystoreAuthorization` that track device lock status.
@@ -138,8 +139,6 @@ pub enum LockState {
     WeakUnlockMethodsExpired,
     /// Non-LSKF unlock methods have expired.
     NonLskfUnlockMethodsExpired,
-    /// Mark the current position in the queue and trigger when reached.
-    Sync(Arc<(Mutex<bool>, Condvar)>),
 }
 
 impl DeviceLockState {
@@ -156,13 +155,6 @@ impl DeviceLockState {
             LockState::WeakUnlockMethodsExpired => Self::on_weak_unlock_methods_expired(op.user),
             LockState::NonLskfUnlockMethodsExpired => {
                 Self::on_non_lskf_unlock_methods_expired(op.user)
-            }
-            LockState::Sync(pair) => {
-                let (lock, cv) = &*pair;
-                let mut reached = lock.lock().unwrap();
-                *reached = true;
-                // We notify the condvar that this point in the queue has been reached.
-                cv.notify_one();
             }
         }
     }
@@ -238,21 +230,12 @@ impl AuthorizationManager {
     /// Create a new instance of Keystore Authorization service.
     pub fn new_native_binder() -> Result<Strong<dyn IKeystoreAuthorization>> {
         let mgr = if keystore2_flags::async_lock_state() {
-            // Spawn a separate thread to handle notifications of authorization state, so Binder
+            // Use an `AsyncTask` to handle notifications of authorization state, so Binder
             // invocations can complete swiftly.
-            let (send, recv) = crossbeam_channel::unbounded();
-            ENFORCEMENTS.install_lock_state_channel(send.clone());
-            std::thread::spawn(move || {
-                info!("starting async authorization notification processing thread");
-                loop {
-                    let op = recv.recv().unwrap_or_else(|e| {
-                        panic!("Async operation thread channel hung up! {e:?}")
-                    });
-                    info!("process {op:?} from notification queue");
-                    DeviceLockState::update(op);
-                }
-            });
-            Self::Asynchronous(send)
+            let lock_state_task = Arc::new(AsyncTask::new(std::time::Duration::from_secs(5)));
+            ENFORCEMENTS.install_lock_state_task(lock_state_task.clone());
+
+            Self::Asynchronous(lock_state_task)
         } else {
             Self::Synchronous
         };
@@ -262,14 +245,16 @@ impl AuthorizationManager {
         ))
     }
 
+    /// Act on a lock state notification.
     fn update_lock_state(&self, op: LockStateNotification) {
         match self {
-            Self::Asynchronous(channel) => {
-                // Send the notification to the background thread to be acted on there.
+            Self::Asynchronous(async_task) => {
+                // Send the notification to the async task to be acted on there.
                 info!("add {op:?} to notification queue");
-                if let Err(e) = channel.send(op) {
-                    panic!("Failed to send auth operation to async thread! {e:?}");
-                }
+                async_task.queue_hi(|_shelf| {
+                    info!("process {op:?} from notification queue");
+                    DeviceLockState::update(op)
+                });
             }
             Self::Synchronous => {
                 // Act on the notification operation immediately.

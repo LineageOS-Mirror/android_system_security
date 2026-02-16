@@ -171,8 +171,24 @@ impl AsyncTask {
     where
         F: for<'r> FnOnce(&'r mut Shelf) + Send + 'static,
     {
+        self.queue_if(|_state| true, f, hi_prio);
+    }
+
+    /// Add the job `f` to the specified queue, but only if the `condition`  closure returns `true`.
+    ///
+    /// Returns an indication of whether the job was queued or not.
+    fn queue_if<C, F>(&self, condition: C, f: F, hi_prio: bool) -> bool
+    where
+        C: FnOnce(&AsyncTaskState) -> bool,
+        F: for<'r> FnOnce(&'r mut Shelf) + Send + 'static,
+    {
         let (ref condvar, ref state) = *self.state;
         let mut state = state.lock().unwrap();
+
+        let add_to_queue = condition(&state);
+        if !add_to_queue {
+            return false;
+        }
 
         if hi_prio {
             state.hi_prio_req.push_back(Box::new(f));
@@ -185,6 +201,22 @@ impl AsyncTask {
         }
         drop(state);
         condvar.notify_all();
+        true
+    }
+
+    /// Add a one-off job to the high-priority queue, but only if there is already current
+    /// work (the worker thread is running or there is work queued).
+    ///
+    /// Returns an indication of whether the job was queued or not.
+    pub fn queue_hi_if_running<F>(&self, f: F) -> bool
+    where
+        F: FnOnce(&mut Shelf) + Send + 'static,
+    {
+        self.queue_if(
+            |state| state.state == State::Running || !state.hi_prio_req.is_empty(),
+            f,
+            true,
+        )
     }
 
     fn spawn_thread(&self, state: &mut MutexGuard<AsyncTaskState>) {
