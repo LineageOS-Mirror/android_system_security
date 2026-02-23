@@ -17,12 +17,12 @@
 use crate::error::anyhow_error_to_cstring;
 use crate::error::Error as KeystoreError;
 use crate::globals::{DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY};
-use crate::ks_err;
 use crate::permission::KeystorePerm;
 use crate::super_key::WipeKeyOption;
 use crate::utils::{
     check_keystore_permission, watchdog as wd, AndroidUserId, Challenge, SecureUserId,
 };
+use crate::{ks_err, log_client_err};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
 };
@@ -65,7 +65,7 @@ pub enum Error {
 ///
 /// All non `Error` error conditions get mapped onto ResponseCode::SYSTEM_ERROR`.
 pub fn into_logged_binder(e: anyhow::Error) -> BinderStatus {
-    error!("{e:#?}");
+    log_client_err!(e);
     let root_cause = e.root_cause();
     if let Some(KeystoreError::Rc(ks_rcode)) = root_cause.downcast_ref::<KeystoreError>() {
         let rc = match *ks_rcode {
